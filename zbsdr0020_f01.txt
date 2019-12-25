@@ -1,0 +1,353 @@
+*&---------------------------------------------------------------------*
+*& Include          ZBSDR0020_F01
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& Form SELECT_DETAIL_DATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM SELECT_DETAIL_DATA .
+DATA: LT_DD07V TYPE DD07V OCCURS 0 WITH HEADER LINE.
+CLEAR : GT_DETAIL, GS_DETAIL.
+
+SELECT B~ORDEID, A~ORDENO, B~ORDEDY, C~PROJID,C~PROJNM, A~ORDEPR,
+A~ORDEMO, D~USERNM, A~USERID, B~ORDEFG, B~DELFLG,
+E~FUNDST, A~DELVAD, A~DELVDE, A~DELVPO, F~MANUST
+INTO CORRESPONDING FIELDS OF TABLE @GT_DETAIL
+FROM ZBSDT0020 AS A INNER JOIN ZBSDT0010 AS B
+ON A~ORDEID EQ B~ORDEID
+AND A~PROJID EQ B~PROJID
+INNER JOIN ZBFDT0010 AS C
+ON A~PROJID EQ C~PROJID
+INNER JOIN ZBPPT0010 AS D
+ON A~USERID EQ D~USERID
+INNER JOIN ZBFDT0020 AS E
+ON A~PROJID EQ E~PROJID
+INNER JOIN ZBPPT0020 AS F
+ON A~ORDEID EQ F~ORDEID
+WHERE B~ORDEID IN @S_ORDEID
+AND A~ORDENO IN @S_ORDENO
+AND C~PROJID IN @S_PROJID
+AND B~ORDEDY IN @S_ORDEDY
+AND A~USERID IN @S_USERID
+AND B~ORDEFG EQ 'FD'
+AND E~FUNDST EQ 'C'.
+
+LOOP AT GT_DETAIL INTO GS_DETAIL.
+IF GS_DETAIL-DELFLG EQ 'X'. "취소된 주문에 대해서는 붉은색으로 표시해줌.
+GS_DETAIL-LCOLOR = 'C610'.
+ENDIF.
+MODIFY GT_DETAIL FROM GS_DETAIL.
+ENDLOOP.
+
+CLEAR : LT_DD07V-DDTEXT.
+CALL FUNCTION 'GET_DOMAIN_VALUES'
+EXPORTING
+DOMNAME = 'ZBD_MANUST'
+TABLES
+VALUES_TAB = LT_DD07V
+EXCEPTIONS
+OTHERS = 1.
+READ TABLE LT_DD07V WITH KEY DOMVALUE_L = GS_DETAIL-MANUST BINARY SEARCH.
+
+*      IF SY-SUBRC EQ 0.
+IF GS_DETAIL-MANUST NE ' '.
+GS_DETAIL-MANUST_I = LT_DD07V-DDTEXT.
+ELSE.
+GS_DETAIL-MANUST_I = '주문 접수'.
+ENDIF.
+
+LOOP AT GT_DETAIL INTO GS_DETAIL. "ALV 전체를 돌면서 도메인밸류값 넣어주기 위한 구문.
+READ TABLE LT_DD07V WITH KEY DOMVALUE_L = GS_DETAIL-MANUST_I.
+GS_DETAIL-MANUST_I = LT_DD07V-DDTEXT.
+MODIFY GT_DETAIL FROM GS_DETAIL.
+ENDLOOP.
+
+SORT GT_DETAIL BY PROJID ASCENDING.
+
+DESCRIBE TABLE GT_DETAIL LINES GV_CNT.
+
+CLEAR : GV_ERROR.
+
+IF GV_CNT EQ 0.
+GV_ERROR = 'X'.
+MESSAGE S001 DISPLAY LIKE 'E'.
+EXIT.
+ELSE.
+DESCRIBE TABLE GT_DETAIL LINES GV_CNT.
+MESSAGE S003 WITH GV_CNT.
+ENDIF.
+
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form CREATE_INSTANCE_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM CREATE_INSTANCE_0100 .
+
+CREATE OBJECT GR_CON1 "
+EXPORTING
+CONTAINER_NAME = GV_CONTAINER. "
+
+CREATE OBJECT GR_GRID1 "그리드 만들기
+EXPORTING
+I_PARENT = GR_CON1. " 그리드는 항상 컨테이너 위에 올라감. 업어주는 형상.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form APPEND_FIELDCAT_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM APPEND_FIELDCAT_0100 .
+
+DATA: LV_DYNNR TYPE SY-DYNNR.
+LV_DYNNR = SY-DYNNR.
+
+PERFORM GET_FIELDCATLOG_DATA USING LV_DYNNR.
+
+PERFORM MODIFY_FIELDCATLOG_DATA.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form DISPLAY_ALV_GRID_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM DISPLAY_ALV_GRID_0100 .
+
+GS_VARIANT-REPORT = SY-REPID. "현재 프로그램.
+
+GV_SAVE = 'A'. "ALV의 레이아웃을 어떤식으로 저장할 것이냐.
+
+"*-- Build field catalog for the alv control
+CALL METHOD GR_GRID1->SET_TABLE_FOR_FIRST_DISPLAY "
+"그리드를 스크린에 불러옴.
+EXPORTING
+I_DEFAULT = ABAP_TRUE
+IS_LAYOUT = GS_LAYOUT
+IS_VARIANT = GS_VARIANT
+I_SAVE = GV_SAVE
+IT_TOOLBAR_EXCLUDING = GT_EXCLUDE " 기능버튼을 뺄때.
+CHANGING
+IT_FIELDCATALOG = GT_FIELDCAT "
+IT_SORT = GT_SORT
+IT_OUTTAB = GT_DETAIL[]
+"인터널테이블을 가져온것
+EXCEPTIONS
+INVALID_PARAMETER_COMBINATION = 1
+PROGRAM_ERROR = 2
+TOO_MANY_LINES = 3.
+
+GT_SORT_LN-SPOS = '1'. "정렬대상 필드 순서
+GT_SORT_LN-FIELDNAME = 'PROJID'. "정렬대상 필드명
+GT_SORT_LN-UP = 'X'. "오름차순
+* gt_sort_ln-down      = ' '.           "내림차순
+* gt_sort_ln-SUBTOT    = ' '.           "합계]
+APPEND GT_SORT_LN TO GT_SORT.
+*필드별 오름차순 구문
+IF SY-SUBRC NE 0.
+MESSAGE E000(0K) WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form REFRESH_GRID_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM REFRESH_GRID_0100 .
+
+GS_STABLE-ROW = ABAP_TRUE. "Row
+GS_STABLE-COL = ABAP_TRUE. "column
+
+CALL METHOD GR_GRID1->REFRESH_TABLE_DISPLAY
+EXPORTING
+IS_STABLE = GS_STABLE
+I_SOFT_REFRESH = SPACE.
+
+CALL METHOD CL_GUI_CFW=>FLUSH.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form GET_FIELDCATLOG_DATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> LV_DYNNR
+*&---------------------------------------------------------------------*
+FORM GET_FIELDCATLOG_DATA USING LV_DYNNR.
+DATA: LT_FIELDCAT TYPE KKBLO_T_FIELDCAT. "
+DATA: LV_TABNAME TYPE DD02L-TABNAME.
+
+CASE LV_DYNNR.
+WHEN '0010'.
+LV_TABNAME = 'GS_DETAIL'.
+WHEN OTHERS.
+ENDCASE.
+
+CALL FUNCTION 'K_KKB_FIELDCAT_MERGE' "
+EXPORTING
+I_CALLBACK_PROGRAM = SY-REPID "
+I_TABNAME = LV_TABNAME "
+I_BYPASSING_BUFFER = ABAP_TRUE "버퍼에 올림. 필드가 바뀌면 갱신하기 위해서
+I_INCLNAME = SY-REPID ""
+CHANGING
+CT_FIELDCAT = LT_FIELDCAT[]
+EXCEPTIONS
+INCONSISTENT_INTERFACE = 1
+OTHERS = 2.
+
+IF SY-SUBRC EQ 0.
+
+"-- Trasnfer LVC.
+CALL FUNCTION 'LVC_TRANSFER_FROM_KKBLO' "
+EXPORTING
+IT_FIELDCAT_KKBLO = LT_FIELDCAT[]
+IMPORTING
+ET_FIELDCAT_LVC = GT_FIELDCAT[] "AVL 타입으로 컨버전을 하는 것..
+EXCEPTIONS
+IT_DATA_MISSING = 1.
+ELSE.
+
+" Error Fieldcatalog merge!!
+MESSAGE E000 WITH 'Error Fieldcatalog merge!!'.
+
+ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form MODIFY_FIELDCATLOG_DATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM MODIFY_FIELDCATLOG_DATA .
+*
+DATA: LV_TEXT(50).
+"각 필드에 해당하는 것들을 내가 텍스트를 부여해서 그에 맞는 텍스트가 ALV에 뜸!!
+"--- Change Fieldcat.
+LOOP AT GT_FIELDCAT INTO GS_FIELDCAT.
+CLEAR: LV_TEXT.
+
+"-- Change fieldcat Attribute
+CASE GS_FIELDCAT-FIELDNAME.
+
+WHEN 'PROJID'.
+LV_TEXT = TEXT-F03.
+GS_FIELDCAT-KEY = 'X'.
+WHEN 'PROJNM'.
+LV_TEXT = TEXT-F04.
+GS_FIELDCAT-KEY = 'X'.
+WHEN 'ORDEID'.
+LV_TEXT = TEXT-F05.
+GS_FIELDCAT-KEY = 'X'.
+WHEN 'ORDENO'.
+LV_TEXT = TEXT-F06.
+GS_FIELDCAT-LZERO = 'X'.
+GS_FIELDCAT-KEY = 'X'.
+WHEN 'ORDEDY'.
+LV_TEXT = TEXT-F07.
+WHEN 'ORDEMO'.
+LV_TEXT = TEXT-F08.
+WHEN 'ORDEPR'.
+LV_TEXT = TEXT-F09.
+WHEN 'USERNM'.
+LV_TEXT = TEXT-F11.
+WHEN 'USERID'.
+GS_FIELDCAT-KEY = 'X'.
+LV_TEXT = TEXT-F12.
+WHEN 'DELVAD'.
+LV_TEXT = TEXT-F14.
+WHEN 'DELVDE'.
+LV_TEXT = TEXT-F15.
+WHEN 'DELVPO'.
+LV_TEXT = TEXT-F16.
+WHEN 'DELFLG'.
+LV_TEXT = TEXT-F13.
+GS_FIELDCAT-CHECKBOX = 'X'.
+WHEN 'MANUST'.
+
+LV_TEXT = TEXT-F10.
+GS_FIELDCAT-JUST = 'R'.
+GS_FIELDCAT-OUTPUTLEN = '8'.
+WHEN 'MANUST_I'.
+GS_FIELDCAT-COLTEXT = '진행 상태'.
+GS_FIELDCAT-OUTPUTLEN = '8'.
+
+"TRUE 일때 체크박스에 체크가 돼있게끔하기 위해 X를 넣고 아닐시 ' ' 해주면 된다.
+
+WHEN OTHERS.
+GS_FIELDCAT-NO_OUT = ABAP_TRUE.
+ENDCASE.
+"Column Optimizer
+GS_FIELDCAT-COL_OPT = ABAP_TRUE.
+
+"-- Common attribute
+IF LV_TEXT IS NOT INITIAL.
+GS_FIELDCAT-COLTEXT = LV_TEXT.
+GS_FIELDCAT-SCRTEXT_L = LV_TEXT.
+GS_FIELDCAT-SCRTEXT_M = LV_TEXT.
+GS_FIELDCAT-SCRTEXT_S = LV_TEXT.
+ENDIF.
+
+MODIFY GT_FIELDCAT FROM GS_FIELDCAT.
+ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form MODIFY_SCREEN
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM MODIFY_SCREEN .
+LOOP AT SCREEN. "조회 조건을 입력 금지로 만드는 구문임.
+IF SCREEN-GROUP1 = 'MD1'.
+SCREEN-INPUT = '0'.
+MODIFY SCREEN.
+ENDIF.
+ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form INIT_LAYOUT_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM INIT_LAYOUT_0100 .
+GS_LAYOUT-EDIT_MODE = ABAP_TRUE.
+GS_LAYOUT-ZEBRA = ABAP_TRUE.
+GS_LAYOUT-CWIDTH_OPT = ABAP_TRUE.
+GS_LAYOUT-SEL_MODE = 'A'. "B:단일,C:복수,D:셀,A:행/열
+GS_LAYOUT-NO_ROWMARK = SPACE.
+*  GS_LAYOUT-EXCP_LED = 'X'.
+*  GS_LAYOUT-EXCP_FNAME = 'ICON'.
+GS_LAYOUT-INFO_FNAME = 'LCOLOR'.
+*  GS_LAYOUT-CTAB_FNAME  = 'TCOLOR'.
+
+ENDFORM.
